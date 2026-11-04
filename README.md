@@ -24,4 +24,4 @@ Each build is signed with a fresh debug key, so to install a newer build you may
 ## Build
 
 Every push to `main` builds the APK with GitHub Actions and publishes it as a release.
-Locally: `gradle :app:assembleDebug` (JDK 17, Android SDK 34).
+Locally: `gradle :app:assembleDebug` (JDK 17, Android SDK 34), or without Gradle/the Android SDK using `tools/build-local.sh` (see the script header).
