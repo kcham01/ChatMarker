@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PDF to Images</string>
+    <string name="input_heading">Input folder (PDFs)</string>
+    <string name="output_heading">Output folder (images)</string>
+    <string name="choose_input">Choose input folder</string>
+    <string name="choose_output">Choose output folder</string>
+    <string name="none_chosen">Not chosen yet</string>
+    <string name="storage_root">Main storage</string>
+    <string name="format_heading">Image format</string>
+    <string name="format_png">PNG (best quality, large files)</string>
+    <string name="format_jpeg">JPEG (much smaller files)</string>
+    <string name="size_heading">Page size (longest side)</string>
+    <string name="size_1600">1600 px (smallest)</string>
+    <string name="size_2400">2400 px (recommended)</string>
+    <string name="size_3200">3200 px (sharpest)</string>
+    <string name="start">Start</string>
+    <string name="start_again">Start / resume</string>
+    <string name="stop">Stop</string>
+    <string name="converting">Converting PDFs</string>
+    <string name="finished">Conversion finished</string>
+    <string name="stopped">Conversion stopped</string>
+    <string name="channel_name">Conversion progress</string>
+    <string name="pick_both">Choose both an input and an output folder first.</string>
+    <string name="permission_failed">Couldn\'t keep access to that folder. Try choosing it again.</string>
+    <string name="file_progress">File %1$d of %2$d: %3$s\nPage %4$d of %5$d</string>
+    <string name="counts">Pages saved: %1$d · Already done (skipped): %2$d</string>
+    <string name="help">Every PDF directly inside the input folder becomes a subfolder in the output folder, with one image per page (page_0001, page_0002, …).\n\nIt keeps running in the background with the screen off. If you stop it or it gets interrupted, press Start again with the same folders and it picks up where it left off.\n\nThe PDFs need to be stored on the phone (for example in Downloads), not only in Google Drive.</string>
+</resources>
