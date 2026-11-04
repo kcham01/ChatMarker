@@ -44,3 +44,4 @@ jobs:
             If Android says it can't update an older build, uninstall the old one first.
           files: PDF-to-Images.apk
           make_latest: true
+          
