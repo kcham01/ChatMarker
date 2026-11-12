@@ -1,27 +1,26 @@
-# PDF to Images
+# BookPins
 
-An Android app that converts every page of every PDF in a folder into images, in bulk.
-
-- Pick an **input folder** of PDFs and an **output folder** for the images.
-- Choose **PNG** (best quality) or **JPEG** (much smaller), and the page size (1600 / 2400 / 3200 px on the longest side).
-- Each PDF gets its own subfolder: `page_0001.png`, `page_0002.png`, …
-- Runs in the background with the screen off, with progress and a Stop button in the notification.
-- **Resumable:** press Start again with the same folders and it skips pages that are already done.
+A small WoW Forever addon that pins all 40 arcane books on the world map and plans a short route through them.
 
 ## Install
+Copy the `BookPins` folder into `World of Warcraft/_forever_/Interface/AddOns/` (or whichever `_xxx_` folder your Forever client uses). If it shows as out of date, tick **Load out of date AddOns** on the character-select AddOns screen.
 
-Grab the latest `PDF-to-Images.apk` from [Releases](../../releases/latest) on your phone and open it.
-You may need to allow installs from your browser or file manager the first time.
+## What it does
+- Book icon pins on zone, continent and world maps. Hover for title, type and coords; **left-click** sets a waypoint, **right-click** toggles collected.
+- Plans a route per continent from where you stand, using a nearest-neighbour start plus 2-opt cleanup (the same kind of TSP heuristic the *Routes* addon uses). Pins are numbered and joined with a gold line.
+- `/books next` sets the game's own waypoint (and a TomTom arrow if TomTom is installed). When you get within 10 yards it marks the book collected and moves on to the next one (`/books auto` turns this off).
+- Progress is saved per account.
 
-Each build is signed with a fresh debug key, so to install a newer build you may need to uninstall the old one first.
+## Commands
+| | |
+|---|---|
+| `/books` | help + how many are left |
+| `/books next` | waypoint to the next stop |
+| `/books route` | re-plan from your current position |
+| `/books list` | print the route |
+| `/books done` | mark current target collected |
+| `/books auto` | toggle auto-collect on arrival |
+| `/books lines` / `collected` / `toggle` | route lines / show collected pins / hide everything |
+| `/books clear` / `reset` | clear waypoint / un-collect everything |
 
-## Notes
-
-- The PDFs need to be stored on the phone (e.g. Downloads). Files that only live in Google Drive can't be read directly.
-- Only PDFs directly inside the input folder are converted (not subfolders).
-- Very large pages are capped at ~25 megapixels to avoid running out of memory.
-
-## Build
-
-Every push to `main` builds the APK with GitHub Actions and publishes it as a release.
-Locally: `gradle :app:assembleDebug` (JDK 17, Android SDK 34), or without Gradle/the Android SDK using `tools/build-local.sh` (see the script header).
+Distances are straight-line, so the route can't account for mountains, flight paths or boats. Kalimdor and the Eastern Kingdoms are planned as separate legs, and your current continent comes first.

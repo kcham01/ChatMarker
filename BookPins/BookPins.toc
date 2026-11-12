@@ -1,0 +1,9 @@
+## Interface: 16001, 120000, 120001, 120005, 120007
+## Title: BookPins
+## Notes: Pins every arcane book on the world map and plans a short route between them.
+## Author: kcham01
+## Version: 1.0.0
+## SavedVariables: BookPinsDB
+
+Data.lua
+Core.lua
