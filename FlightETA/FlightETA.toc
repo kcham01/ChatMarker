@@ -3,6 +3,6 @@
 ## Notes: Shows time left on your flight path and the stops between you and your destination.
 ## Author: kcham01
 ## Version: 1.0.0
-## SavedVariables: FlightETADB
+## SavedVariables: FlightETADB, FlightETALog
 
 FlightETA.lua

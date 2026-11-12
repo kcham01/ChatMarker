@@ -5,7 +5,10 @@ local PATH_FACTOR = 1.25    -- flight paths curve; straight-line distance * this
 local PASS_RADIUS = 250     -- yards: how close the taxi must come to count as passing a stop
 local TICK = 0.2
 
+local TRACE_EVERY = 2       -- seconds between position samples in the flight log
+
 local db
+local log       -- FlightETALog: every flight taken, for building a database
 local pending   -- route picked at the flight master, waiting for the taxi to start
 local flight    -- active flight state
 
@@ -30,8 +33,11 @@ local function playerPos()
   local cont, w = C_Map.GetWorldPosFromMapPos(mapID, pos)
   if not cont or not w then return end
   local x, y = w:GetXY()
-  return { cont = cont, wx = x, wy = y }
+  return { cont = cont, wx = x, wy = y, mapID = mapID, mx = pos.x, my = pos.y }
 end
+
+local function r1(v) return v and math.floor(v * 10 + 0.5) / 10 end
+local function r4(v) return v and math.floor(v * 10000 + 0.5) / 10000 end
 
 ----------------------------------------------------------------------------
 -- Reading the route off the flight master
@@ -42,11 +48,10 @@ local function taxiNodePositions()
   if mapID and C_TaxiMap and C_TaxiMap.GetAllTaxiNodes then
     for _, n in ipairs(C_TaxiMap.GetAllTaxiNodes(mapID) or {}) do
       if n.slotIndex and n.position then
+        local rec = { nodeID = n.nodeID, mapID = mapID, mx = n.position.x, my = n.position.y }
         local cont, w = C_Map.GetWorldPosFromMapPos(mapID, n.position)
-        if cont and w then
-          local x, y = w:GetXY()
-          bySlot[n.slotIndex] = { cont = cont, wx = x, wy = y }
-        end
+        if cont and w then rec.cont = cont; rec.wx, rec.wy = w:GetXY() end
+        bySlot[n.slotIndex] = rec
       end
     end
   end
@@ -60,7 +65,10 @@ local function buildRoute(destSlot)
   local function node(slot)
     local n = { name = TaxiNodeName(slot) or "?" }
     local p = pos[slot]
-    if p then n.cont, n.wx, n.wy = p.cont, p.wx, p.wy end
+    if p then
+      n.cont, n.wx, n.wy = p.cont, p.wx, p.wy
+      n.nodeID, n.mapID, n.mx, n.my = p.nodeID, p.mapID, p.mx, p.my
+    end
     return n
   end
   local nodes = { [0] = node(TaxiGetNodeSlot(destSlot, 1, false)) }
@@ -204,12 +212,89 @@ local function render()
   frame:SetHeight(38 + stops:GetStringHeight())
 end
 
+----------------------------------------------------------------------------
+-- Flight log (dev): every flight is saved to FlightETALog for a database
+----------------------------------------------------------------------------
+local function nodeRec(n)
+  return { name = n.name, nodeID = n.nodeID, mapID = n.mapID, x = r4(n.mx), y = r4(n.my),
+           cont = n.cont, wx = r1(n.wx), wy = r1(n.wy) }
+end
+
+-- every flight master on the open taxi map, keyed by nodeID
+local function catalogNodes()
+  if not log.enabled then return end
+  local mapID = GetTaxiMapID and GetTaxiMapID()
+  if not (mapID and C_TaxiMap and C_TaxiMap.GetAllTaxiNodes) then return end
+  for _, n in ipairs(C_TaxiMap.GetAllTaxiNodes(mapID) or {}) do
+    if n.nodeID and n.position then
+      local rec = log.nodes[n.nodeID] or {}
+      rec.name, rec.mapID, rec.x, rec.y = n.name, mapID, r4(n.position.x), r4(n.position.y)
+      local cont, w = C_Map.GetWorldPosFromMapPos(mapID, n.position)
+      if cont and w then rec.cont = cont; rec.wx, rec.wy = w:GetXY(); rec.wx, rec.wy = r1(rec.wx), r1(rec.wy) end
+      log.nodes[n.nodeID] = rec
+    end
+  end
+end
+
+local function startLog(f)
+  if not log.enabled then return end
+  local r = f.route
+  local stops = {}
+  for i = 1, r.hops do stops[i] = nodeRec(r.nodes[i]) end
+  local _, build = GetBuildInfo()
+  f.log = {
+    date = date("%Y-%m-%d %H:%M:%S"), build = build,
+    char = UnitName("player"), realm = GetRealmName(), faction = UnitFactionGroup("player"),
+    level = UnitLevel("player"),
+    from = nodeRec(r.nodes[0]), to = nodeRec(r.nodes[r.hops]), stops = stops, hops = r.hops,
+    estimate = r1(db.routes[r.key]), trace = {},
+  }
+  f.nextTrace = 0
+end
+
+local function sampleTrace(f, now)
+  if not f.log or now < f.nextTrace then return end
+  f.nextTrace = now + TRACE_EVERY
+  local p = playerPos()
+  if p then table.insert(f.log.trace, { r1(now - f.start), r1(p.wx), r1(p.wy) }) end
+end
+
+local function finishLog(f, how)
+  local L = f.log
+  if not L then return end
+  local now, p = GetTime(), playerPos()
+  L.total = r1(now - f.start)
+  L.ended = how -- "landed" or "logout"
+  if p then
+    L.landed = { cont = p.cont, wx = r1(p.wx), wy = r1(p.wy), mapID = p.mapID, x = r4(p.mx), y = r4(p.my) }
+    -- nearest known flight master to where we came down
+    local bestD, best
+    for id, n in pairs(log.nodes) do
+      local d = dist(p, n)
+      if d and (not bestD or d < bestD) then bestD, best = d, id end
+    end
+    for _, n in ipairs(L.stops) do
+      local d = dist(p, n)
+      if d and (not bestD or d < bestD) then bestD, best = d, n.nodeID or n.name end
+    end
+    if best then
+      L.landed.nearestNode = best
+      L.landed.nearestName = log.nodes[best] and log.nodes[best].name or best
+      L.landed.nearestYards = r1(bestD)
+    end
+  end
+  table.insert(log.flights, L)
+end
+
 -- The stop button (TaxiRequestEarlyLanding) sets you down at the next stop
 -- on the route you haven't passed yet.
 hooksecurefunc("TaxiRequestEarlyLanding", function()
   local f = flight
   if not f or f.landAt or f.leg >= f.route.hops then return end
   f.landAt = f.leg
+  if f.log then
+    f.log.stopButton = { at = r1(GetTime() - f.start), expected = f.route.nodes[f.leg].name, expectedStop = f.leg }
+  end
   msg("landing early at |cffffd100" .. f.route.nodes[f.leg].name .. "|r.")
   render()
 end)
@@ -226,6 +311,7 @@ local function startFlight()
   if not r then return end
   local now = GetTime()
   flight = { route = r, start = now, legStart = now, leg = 1, minD = math.huge }
+  startLog(flight)
   frame:Show()
   render()
 end
@@ -235,6 +321,7 @@ local function endFlight()
   flight = nil
   if db.locked then frame:Hide() end
   if not f then return end
+  finishLog(f, "landed")
   local r, now = f.route, GetTime()
   local final = f.landAt or r.hops
   local d = dist(playerPos(), r.nodes[final])
@@ -266,12 +353,17 @@ local function tick()
         or (ahead and gap and ahead < gap * 0.85 and d > f.minD + 40)
       if passed then
         learnLeg(r, f.leg, f.minT - f.legStart)
+        if f.log then
+          local st = f.log.stops[f.leg]
+          st.passedAt, st.passedYards = r1(f.minT - f.start), r1(f.minD)
+        end
         f.legStart, f.leg, f.minD = f.minT, f.leg + 1, math.huge
         -- flew past the stop we asked to land at; the game lands at the next one
         if f.landAt and f.landAt < f.leg then f.landAt = f.leg end
       end
     end
   end
+  sampleTrace(f, GetTime())
   render()
 end
 
@@ -280,8 +372,20 @@ end
 ----------------------------------------------------------------------------
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
-ev:SetScript("OnEvent", function(_, _, name)
+ev:RegisterEvent("TAXIMAP_OPENED")
+ev:RegisterEvent("PLAYER_LOGOUT")
+ev:SetScript("OnEvent", function(_, event, name)
+  if event == "TAXIMAP_OPENED" then pcall(catalogNodes) return end
+  if event == "PLAYER_LOGOUT" then
+    if flight then finishLog(flight, "logout") end
+    return
+  end
   if name ~= ADDON then return end
+  FlightETALog = FlightETALog or {}
+  log = FlightETALog
+  log.flights = log.flights or {}
+  log.nodes = log.nodes or {}
+  if log.enabled == nil then log.enabled = true end
   FlightETADB = FlightETADB or {}
   db = FlightETADB
   db.legs = db.legs or {}
@@ -314,6 +418,12 @@ SlashCmdList.FLIGHTETA = function(input)
     db.locked = true
     if not flight then frame:Hide() end
     msg("frame locked.")
+  elseif cmd == "log" then
+    log.enabled = not log.enabled
+    msg("flight logging " .. (log.enabled and "ON" or "OFF") .. (" (%d flights saved)"):format(#log.flights))
+  elseif cmd == "log clear" then
+    wipe(log.flights)
+    msg("flight log cleared (flight master list kept).")
   elseif cmd == "reset" then
     wipe(db.legs); wipe(db.routes); db.speed = DEFAULT_SPEED
     msg("learned flight times cleared.")
@@ -323,5 +433,9 @@ SlashCmdList.FLIGHTETA = function(input)
     msg(("%d legs timed, avg speed %.1f yd/s. Times start as estimates (~) and become exact after you've flown a route once."):format(n, db.speed))
     print("  /feta move — unlock and drag the frame   /feta lock — lock it")
     print("  /feta reset — forget learned flight times")
+    local nodes = 0
+    for _ in pairs(log.nodes) do nodes = nodes + 1 end
+    print(("  /feta log — logging is %s: %d flights, %d flight masters saved"):format(log.enabled and "ON" or "OFF", #log.flights, nodes))
+    print("  /feta log clear — delete saved flights")
   end
 end
