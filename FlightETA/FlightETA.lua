@@ -161,7 +161,23 @@ local function buildRoute(destSlot)
   if hops < 1 then return end
   local bySlot = readTaxiNodes()
   local function node(slot) return copyNode(bySlot[slot] or { name = TaxiNodeName(slot) or "?" }) end
-  local nodes = { [0] = node(TaxiGetNodeSlot(destSlot, 1, false)) }
+  -- The start is the flight master you're standing at. (On a nonstop route
+  -- TaxiGetNodeSlot can report the destination as the start.)
+  local src
+  if TaxiNodeGetType then
+    for slot in pairs(bySlot) do
+      if TaxiNodeGetType(slot) == "CURRENT" then src = slot break end
+    end
+  end
+  if not src then
+    local s1 = TaxiGetNodeSlot(destSlot, 1, false)
+    if s1 ~= destSlot then src = s1 end
+  end
+  local nodes = { [0] = src and node(src) or { name = "?" } }
+  if not src then -- unknown start: use where you're standing
+    local p = playerPos()
+    if p then nodes[0].cont, nodes[0].wx, nodes[0].wy = p.cont, p.wx, p.wy end
+  end
   for i = 1, hops do nodes[i] = node(TaxiGetNodeSlot(destSlot, i, true)) end
   nodes[hops] = node(destSlot) -- the final stop is exactly what was clicked
   -- The route is keyed by every stop on it, by nodeID: unlocking a flight
@@ -199,8 +215,8 @@ local function legBase(r, i, landing)
   t = refTime(r, i - 1, i)
   if t then return t, "reference" end
   local d = dist(r.nodes[i - 1], r.nodes[i])
-  if d then return d * PATH_FACTOR / db.speed, "distance" end
-  return 60, "guess"
+  if d and d > 50 then return d * PATH_FACTOR / db.speed, "distance" end
+  return nil, "unknown"
 end
 
 -- base seconds for the whole route, if it has been flown as a whole. (The
@@ -289,24 +305,36 @@ stops:SetSpacing(2)
 -- shown seconds to every remaining stop, plus whether the final time is exact
 local function computeEtas(f, now)
   local r, k = f.route, f.factor
-  local etas, t, exact = {}, 0, true
+  local etas, t, exact, unknown = {}, 0, true, false
   local final = f.landAt or r.hops
   for i = f.leg, r.hops do
     local base, src = legBase(r, i, i == final)
-    local lt = base * k
-    if i == f.leg then lt = math.max(lt - (now - f.legStart), 0) end
-    if src ~= "learned" and i <= final then exact = false end
-    t = t + lt
-    etas[i] = t
+    if not base then
+      unknown = true -- no time for this leg: ETAs from here on are unknown
+    elseif not unknown then
+      local lt = base * k
+      if i == f.leg then
+        local over = (now - f.legStart) - lt
+        lt = math.max(-over, 0)
+        if i == final and over > 0 then f.over = over end
+      end
+      if src ~= "learned" and i <= final then exact = false end
+      t = t + lt
+      etas[i] = t
+    end
   end
   -- a whole-route time beats summed legs; scale the stop ETAs to match it
-  if not f.landAt and etas[r.hops] > 0 then
-    local full, src = routeBase(r)
-    if full then
-      local scale = math.max(full * k - (now - f.start), 0) / etas[r.hops]
-      for i = f.leg, r.hops do etas[i] = etas[i] * scale end
-      exact = true
+  local full = not f.landAt and routeBase(r)
+  if full then
+    local left = full * k - (now - f.start)
+    f.over = left < 0 and -left or nil
+    if etas[r.hops] and etas[r.hops] > 0 then
+      local scale = math.max(left, 0) / etas[r.hops]
+      for i = f.leg, r.hops do if etas[i] then etas[i] = etas[i] * scale end end
+    else
+      etas[r.hops] = math.max(left, 0)
     end
+    exact = true
   end
   return etas, exact
 end
@@ -316,7 +344,7 @@ local function stopTarget(f, etas)
   local r = f.route
   for i = f.leg, r.hops - 1 do
     local cutoff = deadlineFor(r, i)
-    if not cutoff or etas[i] > cutoff * f.factor then return i, cutoff end
+    if not cutoff or not etas[i] or etas[i] > cutoff * f.factor then return i, cutoff end
   end
 end
 
@@ -326,17 +354,29 @@ local function render()
   local r, now = f.route, GetTime()
   local elapsed = now - f.start
   local final = f.landAt or r.hops
+  f.over = nil
   local etas, exact = computeEtas(f, now)
   f.etas = etas
-  local remaining = etas[final] or 0
+  local remaining = etas[final]
 
   title:SetText((f.landAt and "|cffff8040Landing:|r " or "") .. r.nodes[final].name)
-  timer:SetText((exact and "" or "~") .. fmt(remaining))
-  bar:SetValue(elapsed / math.max(elapsed + remaining, 1))
+  if not remaining then
+    -- never flown and nothing to estimate from: count up while timing it
+    timer:SetText("|cff999999" .. fmt(elapsed) .. "|r")
+    bar:SetValue(0)
+  elseif remaining <= 0 and f.over then
+    timer:SetText("|cffff8040+" .. fmt(f.over) .. "|r") -- running late
+    bar:SetValue(1)
+  else
+    timer:SetText((exact and "" or "~") .. fmt(remaining))
+    bar:SetValue(elapsed / math.max(elapsed + remaining, 1))
+  end
+  local function eta(i) return etas[i] and fmt(etas[i]) or "?" end
 
   local lines = {}
   if r.hops == 1 then
     lines[1] = "|cff888888Nonstop: the stop button won't land you early|r"
+    if not remaining then lines[2] = "|cff888888First flight on this route: timing it|r" end
   else
     for i = 1, r.hops do
       local n = r.nodes[i].name
@@ -345,16 +385,16 @@ local function render()
       elseif i > final then
         lines[#lines + 1] = "|cff555555" .. n .. "  (skipped)|r"
       elseif i == final then
-        lines[#lines + 1] = "|cffffd100" .. n .. "|r  " .. fmt(etas[i])
+        lines[#lines + 1] = "|cffffd100" .. n .. "|r  " .. eta(i)
       else
-        lines[#lines + 1] = (i == f.leg and "|cffffffff> " or "|cffbbbbbb  ") .. n .. "|r  " .. fmt(etas[i])
+        lines[#lines + 1] = (i == f.leg and "|cffffffff> " or "|cffbbbbbb  ") .. n .. "|r  " .. eta(i)
       end
     end
     if not f.landAt then
       local target, cutoff = stopTarget(f, etas)
       if target then
-        local line = ("|cff40c0ffStop button: %s in %s"):format(r.nodes[target].name, fmt(etas[target]))
-        if cutoff then line = line .. (" (press within %s)"):format(fmt(etas[target] - cutoff * f.factor)) end
+        local line = ("|cff40c0ffStop button: %s in %s"):format(r.nodes[target].name, eta(target))
+        if cutoff and etas[target] then line = line .. (" (press within %s)"):format(fmt(etas[target] - cutoff * f.factor)) end
         lines[#lines + 1] = line .. "|r"
       end
     end
