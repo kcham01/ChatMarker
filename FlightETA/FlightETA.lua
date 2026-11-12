@@ -156,40 +156,63 @@ local function render()
   if not f then return end
   local r, now = f.route, GetTime()
   local elapsed = now - f.start
+  local final = f.landAt or r.hops -- where we'll actually come down
 
-  -- per-stop ETAs from leg times
+  -- ETA to every remaining stop, from learned or estimated leg times
   local etas, t, exact = {}, 0, true
   for i = f.leg, r.hops do
     local lt, known = legTime(r, i)
     if i == f.leg then lt = math.max(lt - (now - f.legStart), 0) end
-    if not known then exact = false end
+    if not known and i <= final then exact = false end
     t = t + lt
     etas[i] = t
   end
-  local remaining = t
-  local full = db.routes[r.key]
-  if full then remaining, exact = math.max(full - elapsed, 0), true end
+  -- a fully timed route beats summed legs; scale the stop ETAs to match it
+  local full = not f.landAt and db.routes[r.key]
+  if full and etas[r.hops] > 0 then
+    local k = math.max(full - elapsed, 0) / etas[r.hops]
+    for i = f.leg, r.hops do etas[i] = etas[i] * k end
+    exact = true
+  end
+  local remaining = etas[final] or 0
 
-  title:SetText(r.nodes[r.hops].name)
+  title:SetText((f.landAt and "|cffff8040Landing:|r " or "") .. r.nodes[final].name)
   timer:SetText((exact and "" or "~") .. fmt(remaining))
   bar:SetValue(elapsed / math.max(elapsed + remaining, 1))
 
   local lines = {}
-  for i = 1, r.hops do
-    local n = r.nodes[i].name
-    if i < f.leg then
-      lines[#lines + 1] = "|cff666666" .. n .. "|r"
-    elseif i == r.hops then
-      lines[#lines + 1] = "|cffffd100" .. n .. "|r  " .. fmt(remaining)
-    else
-      local eta = etas[i]
-      if full and etas[r.hops] > 0 then eta = eta * remaining / etas[r.hops] end
-      lines[#lines + 1] = (i == f.leg and "|cffffffff> " or "|cffbbbbbb  ") .. n .. "|r  " .. fmt(eta)
+  if r.hops == 1 then
+    lines[1] = "|cff888888Nonstop: the stop button won't land you early|r"
+  else
+    for i = 1, r.hops do
+      local n = r.nodes[i].name
+      if i < f.leg then
+        lines[#lines + 1] = "|cff555555" .. n .. "  (passed)|r"
+      elseif i > final then
+        lines[#lines + 1] = "|cff555555" .. n .. "  (skipped)|r"
+      elseif i == final then
+        lines[#lines + 1] = "|cffffd100" .. n .. "|r  " .. fmt(etas[i])
+      else
+        lines[#lines + 1] = (i == f.leg and "|cffffffff> " or "|cffbbbbbb  ") .. n .. "|r  " .. fmt(etas[i])
+      end
+    end
+    if not f.landAt and f.leg < r.hops then
+      lines[#lines + 1] = ("|cff40c0ffStop button lands you at %s in %s|r"):format(r.nodes[f.leg].name, fmt(etas[f.leg]))
     end
   end
   stops:SetText(table.concat(lines, "\n"))
   frame:SetHeight(38 + stops:GetStringHeight())
 end
+
+-- The stop button (TaxiRequestEarlyLanding) sets you down at the next stop
+-- on the route you haven't passed yet.
+hooksecurefunc("TaxiRequestEarlyLanding", function()
+  local f = flight
+  if not f or f.landAt or f.leg >= f.route.hops then return end
+  f.landAt = f.leg
+  msg("landing early at |cffffd100" .. f.route.nodes[f.leg].name .. "|r.")
+  render()
+end)
 
 ----------------------------------------------------------------------------
 -- Flight tracking
@@ -213,10 +236,11 @@ local function endFlight()
   if db.locked then frame:Hide() end
   if not f then return end
   local r, now = f.route, GetTime()
-  local d = dist(playerPos(), r.nodes[r.hops])
-  if d and d < 300 then -- landed at the destination (not interrupted)
-    if f.leg == r.hops then learnLeg(r, r.hops, now - f.legStart) end
-    db.routes[r.key] = now - f.start
+  local final = f.landAt or r.hops
+  local d = dist(playerPos(), r.nodes[final])
+  if d and d < 300 then -- came down where expected
+    if f.leg == final then learnLeg(r, final, now - f.legStart) end
+    if final == r.hops then db.routes[r.key] = now - f.start end
   end
 end
 
@@ -243,6 +267,8 @@ local function tick()
       if passed then
         learnLeg(r, f.leg, f.minT - f.legStart)
         f.legStart, f.leg, f.minD = f.minT, f.leg + 1, math.huge
+        -- flew past the stop we asked to land at; the game lands at the next one
+        if f.landAt and f.landAt < f.leg then f.landAt = f.leg end
       end
     end
   end
