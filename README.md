@@ -1,26 +1,24 @@
-# BookPins
+# FlightETA
 
-A small WoW Forever addon that pins all 40 arcane books on the world map and plans a short route through them.
+A small WoW Forever addon. While you're on a flight path it shows how long is left and which stops are between you and your destination.
+
+```
+Nethergarde Keep              2:38
+[==========-----------]
+Lakeshire
+> Darkshire                   1:09
+Nethergarde Keep              2:38
+```
 
 ## Install
-Copy the `BookPins` folder into `World of Warcraft/_forever_/Interface/AddOns/` (or whichever `_xxx_` folder your Forever client uses). If it shows as out of date, tick **Load out of date AddOns** on the character-select AddOns screen.
+Copy the `FlightETA` folder into your Forever client's `Interface/AddOns/` folder.
 
-## What it does
-- Book icon pins on zone, continent and world maps. Hover for title, type and coords; **left-click** sets a waypoint, **right-click** toggles collected.
-- Plans a route per continent from where you stand, using a nearest-neighbour start plus 2-opt cleanup (the same kind of TSP heuristic the *Routes* addon uses). Pins are numbered and joined with a gold line.
-- `/books next` sets the game's own waypoint (and a TomTom arrow if TomTom is installed). When you get within 10 yards it marks the book collected and moves on to the next one (`/books auto` turns this off).
-- Progress is saved per account.
+## How it works
+- When you pick a destination at a flight master, it reads the route and every stop along the way.
+- During the flight it shows a timer, a progress bar, and each stop still ahead with its ETA. Stops you've passed are greyed out.
+- The first time you fly a leg, times are estimates (shown with `~`) worked out from distance. It times every leg and full route you fly, so routes you've flown before are exact, and estimates for new legs get better as it learns your flight speed.
 
 ## Commands
-| | |
-|---|---|
-| `/books` | help + how many are left |
-| `/books next` | waypoint to the next stop |
-| `/books route` | re-plan from your current position |
-| `/books list` | print the route |
-| `/books done` | mark current target collected |
-| `/books auto` | toggle auto-collect on arrival |
-| `/books lines` / `collected` / `toggle` | route lines / show collected pins / hide everything |
-| `/books clear` / `reset` | clear waypoint / un-collect everything |
-
-Distances are straight-line, so the route can't account for mountains, flight paths or boats. Kalimdor and the Eastern Kingdoms are planned as separate legs, and your current continent comes first.
+- `/feta`: stats + help
+- `/feta move`: unlock the frame so you can drag it (then `/feta lock`)
+- `/feta reset`: forget learned times
